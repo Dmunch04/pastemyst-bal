@@ -1,1 +1,0 @@
-const string API_ENDPOINT = "https://paste.myst.rs/api";

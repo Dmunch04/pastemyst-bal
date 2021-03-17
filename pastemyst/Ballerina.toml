@@ -1,0 +1,9 @@
+[package]
+org = "munchii"
+name = "pastemyst"
+version = "0.1.0"
+authors = ["Munchii"]
+license = ["MIT"]
+
+[build-options]
+observabilityIncluded = true
