@@ -1,15 +1,14 @@
-import ballerina/io;
 import ballerina/http;
 
-private enum RequestMethod {
-    GET,
-    POST,
-    PUT,
-    PATCH,
-    DELETE
+enum RequestMethod {
+    GET = "GET",
+    POST = "POST",
+    PUT = "PUT",
+    PATCH = "PATCH",
+    DELETE = "DELETE"
 }
 
-private const string BASE_URL = "https://paste.myst.rs";
+string HTTP_ENDPOINT = "https://paste.myst.rs/api/v2";
 
 public class HttpClient {
 
@@ -18,33 +17,34 @@ public class HttpClient {
     private string key;
 
     public function init(string key) {
+        self.api = checkpanic new(HTTP_ENDPOINT);
         self.key = key;
     }
 
-    private function get(string endpoint, json payload = null) {
+    private function get(string endpoint, json payload = null, boolean returnCode = false) returns @tainted json|error {
         return self.request(GET, endpoint, payload);
     }
 
-    private function post(string endpoint, json payload = null) {
+    private function post(string endpoint, json payload = null, boolean returnCode = false) returns @tainted json|error {
         return self.request(POST, endpoint, payload);
     }
 
-    private function put(string endpoint, json payload = null) {
+    private function put(string endpoint, json payload = null, boolean returnCode = false) returns @tainted json|error {
         return self.request(PUT, endpoint, payload);
     }
 
-    private function patch(string endpoint, json payload = null) {
+    private function patch(string endpoint, json payload = null, boolean returnCode = false) returns @tainted json|error {
         return self.request(PATCH, endpoint, payload);
     }
 
-    private function delete(string endpoint, json payload = null) {
+    private function delete(string endpoint, json payload = null, boolean returnCode = false) returns @tainted json|error {
         return self.request(DELETE, endpoint, payload);
     }
 
-    private function request(RequestMethod method, string endpoint, json payload = null) returns @tainted json? {
+    private function request(RequestMethod method, string endpoint, json payload = null, boolean returnCode = false) returns @tainted json|error {
         http:Request req = new;
 
-        req.addHeader("Content-Type", "application/json")
+        req.addHeader("Content-Type", "application/json");
         if (self.key != "") {
             req.addHeader("Authorization", self.key);
         }
@@ -53,78 +53,126 @@ public class HttpClient {
             req.setPayload(payload);
         }
 
-        endpoint = BASE_URL + endpoint;
-
-        var res = null;
         match method {
             GET => {
-                response = self.api->get(endpoint, request);
+                var res = self.api->get(endpoint, req);
+                return self.handleResponse(res, returnCode);
             }
 
             POST => {
-                response = self.api->post(endpoint, request);
+                var res = self.api->post(endpoint, req);
+                return self.handleResponse(res, returnCode);
             }
 
             PUT => {
-                response = self.api->put(endpoint, request);
+                var res = self.api->put(endpoint, req);
+                return self.handleResponse(res, returnCode);
             }
 
             PATCH => {
-                response = self.api->patch(endpoint, request);
+                var res = self.api->patch(endpoint, req);
+                return self.handleResponse(res, returnCode);
             }
 
             DELETE => {
-                response = self.api->delete(endpoint, request);
+                var res = self.api->delete(endpoint, req);
+                return self.handleResponse(res, returnCode);
             }
 
             _ => {
-                io:println("invalid request method: ", method);
+                return error("invalid request method: " + <string>method);
             }
         }
-
-        return self.handleResponse(response);
     }
 
-    private function handleResponse(http:Response|error res) returns @tainted json? {
-        if (response is http:Response) {
-            var msg = response.getJsonPayload();
+    private function handleResponse(http:Response|http:PayloadType|error res, boolean returnCode = false) returns @untainted json|error {
+        if (res is http:Response) {
+            var msg = res.getJsonPayload();
 
             if (msg is json) {
-                if (response.statusCode != 200) {
-                    io:println("ERROR! " + msg.toJsonString());
-                    return;
+                if (res.statusCode != 200) {
+                    panic error("ERROR! " + msg.toJsonString());
                 }
-                return msg;
+                
+                if (returnCode) {
+                    return [res.statusCode, msg];
+                } else {
+                    return msg;
+                }
             } else {
-                io:println("invalid payload recieved");
-                return;
+                return error("invalid payload recieved: " + msg.message());
             }
         } else {
-            io:println("error when calling the backend: ", response.reason());
-            return;
+            return error("error when calling the backend: " + (<error>res).message());
         }
     }
 
-    public function getLanguage(string? name = null, string? ext = null) returns @tainted json? {
+    public function getLanguage(string name = "", string ext = "") returns @untainted json|error {
         string route;
         
-        if (name != null) {
+        if (name != "") {
             route = string `/data/language?name=${name}`;
-        } else if (name is null && ext != null) {
+        } else if (name == "" && ext != "") {
             route = string `/data/languageExt?extension=${ext}`;
         } else {
-            panic error("no name or extension given");
+            return error("no name or extension given");
         }
 
         return self.get(route);
     }
 
-    public function getPaste(string pasteId) returns @tainted json? {
-        string route = string `/paste/{pasteId}`;
+    public function getPaste(string pasteId) returns @untainted json|error {
+        string route = string `/paste/${pasteId}`;
         return self.get(route);
     }
 
-    public function createPaste() returns @tained json? {
+    public function createPaste(Paste paste) returns @untainted json|error {
         string route = string `/paste`;
+
+        // TODO: delete `isPrivate`, `isPublic` and `tags` if not key is set
+        // TODO: actually maybe make a util function to convert `Paste` into json data so we get the right fields only
+        json|error pasteJson = paste.cloneWithType(json);
+        if (pasteJson is json) {
+            return self.post(route, pasteJson);
+        } else {
+            return error("could not convert given paste to json");
+        }
+    }
+
+    public function editPaste(Paste paste) returns @untainted json|error {
+        // TODO: i cant use the paste's `_id` field because its optional
+        //string route = string `/paste/${paste._id}`;
+        string route = string `/paste/id`;
+
+        json|error pasteJson = paste.cloneWithType(json);
+        if (pasteJson is json) {
+            // TODO: make sure `pasteJson` has the `_id` field set and so does all the pasties
+            return self.patch(route, pasteJson);
+        } else {
+            return error("could not convert given paste to json");
+        }
+    }
+
+    public function deletePaste(string pasteId) returns @untainted json|error {
+        string route = string `/paste/${pasteId}`;
+        // TODO: find out a way to return the response status code instead
+        return self.delete(route);
+    }
+
+    // TODO: why cant i take in `ExpiresIn` as the param type? maybe thats just how it is
+    public function getExpireUnix(int createdAt, string expiresIn) returns @untainted json|error {
+        string route = string `/time/expiresInToUnixTime?createdAt=${createdAt}&expiresIn=${expiresIn}`;
+        return self.get(route);
+    }
+
+    public function getUserExists(string username) returns @untainted json|error {
+        string route = string `/user/${username}/exists`;
+        // TODO: find out a way to return the response status code instead
+        return self.get(route);
+    }
+
+    public function getUser(string username) returns @untainted json|error {
+        string route = string `/user/${username}`;
+        return self.get(route);
     }
 }
